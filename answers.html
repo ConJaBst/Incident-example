@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRT Incident Replays</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Saira+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: a steward's review desk. Incident tabs on top, replay left, ruling right, input telemetry underneath. */
+:root{
+  --bg:#eceef2; --panel:#ffffff; --ink:#141922; --muted:#5a6473; --line:#d3d8e0;
+  --accent:#c9460f; --red:#d42f2f; --blue:#1d66db; --proto:#b98900;
+  --thr:#1a8f4c; --brk:#d42f2f; --str:#6447cf;
+  --display:"Saira Condensed","Arial Narrow",sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#11141a; --panel:#1a1f27; --ink:#e7eaf0; --muted:#98a2b2; --line:#2b323d;
+    --accent:#ff8046; --red:#ff5b5b; --blue:#5b9bff; --proto:#f2c230;
+    --thr:#3fd083; --brk:#ff5b5b; --str:#a892ff; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#11141a; --panel:#1a1f27; --ink:#e7eaf0; --muted:#98a2b2; --line:#2b323d;
+  --accent:#ff8046; --red:#ff5b5b; --blue:#5b9bff; --proto:#f2c230;
+  --thr:#3fd083; --brk:#ff5b5b; --str:#a892ff; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.5}
+.page{max-width:1240px;margin:0 auto;padding:20px 16px 40px;display:flex;flex-direction:column;gap:16px}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:8px 24px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+h1{font-family:var(--display);font-weight:700;font-size:40px;line-height:1;margin:2px 0 0;text-transform:uppercase;letter-spacing:.01em;text-wrap:balance}
+header p{margin:0;color:var(--muted);max-width:52ch;font-size:14px}
+.tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
+.tab{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:132px;padding:8px 12px;
+  background:var(--panel);color:var(--ink);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:6px;
+  font:inherit;cursor:pointer;text-align:left}
+.tab .n{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.tab .t{font-family:var(--display);font-weight:600;font-size:18px;line-height:1.1;text-transform:uppercase}
+.tab[aria-selected="true"]{border-color:var(--accent);border-left-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.tab:hover{border-color:var(--muted)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.main{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(0,1fr);gap:16px;align-items:start}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px}
+.stage{overflow:hidden}
+#view{position:relative;aspect-ratio:16/9;min-height:240px;background:#9fc0e4}
+#view canvas{display:block;width:100%;height:100%}
+.hud{position:absolute;left:12px;right:12px;display:flex;gap:8px;align-items:flex-start;pointer-events:none}
+.hud.top{top:10px;justify-content:space-between}
+.hud.bot{bottom:10px}
+.chip{background:rgba(12,15,20,.82);color:#fff;border-radius:4px;padding:4px 8px;font-family:var(--mono);font-size:12px}
+#flag{display:none;align-items:center;gap:6px;font-weight:500}
+#flag i{width:16px;height:11px;display:inline-block;border:1px solid #fff}
+#caption{background:rgba(12,15,20,.82);color:#fff;border-left:4px solid var(--accent);border-radius:4px;padding:6px 10px;font-size:14px;max-width:62ch}
+#caption.hit{border-left-color:#ffd23c}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 12px;border-top:1px solid var(--line)}
+.btn{font:inherit;font-size:13px;font-weight:500;padding:6px 12px;border-radius:5px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;min-width:74px}
+.seg{display:flex}
+.seg .btn{border-radius:0;margin-left:-1px}
+.seg .btn:first-child{border-radius:5px 0 0 5px;margin-left:0}
+.seg .btn:last-child{border-radius:0 5px 5px 0}
+.seg .btn[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+#scrub{flex:1 1 160px;min-width:120px;accent-color:var(--accent)}
+.verdict{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.verdict h2{font-family:var(--display);font-weight:700;font-size:28px;line-height:1.05;margin:0;text-transform:uppercase;text-wrap:balance}
+.pills{display:flex;flex-wrap:wrap;gap:6px}
+.pill{font-family:var(--mono);font-size:11.5px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.pill.cls{border-color:var(--accent);color:var(--accent)}
+.verdict p{margin:0}
+.verdict h3{font-family:var(--mono);font-size:11.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 4px}
+.pen{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.pen .row{display:flex;gap:8px;align-items:baseline}
+.pen .big{font-family:var(--display);font-weight:600;font-size:22px;line-height:1.15}
+.pen .range{font-size:13px;color:var(--muted)}
+.sw{flex:0 0 auto;width:10px;height:10px;border-radius:2px;display:inline-block;transform:translateY(1px)}
+.verdict ul,.verdict ol{margin:0;padding-left:20px}
+.verdict li{margin:3px 0}
+.tele{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.card{padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card .head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.card .name{font-family:var(--display);font-weight:600;font-size:20px;text-transform:uppercase;line-height:1}
+.tag{font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.tag.fault{border-color:var(--accent);color:var(--accent)}
+.card .spd{margin-left:auto;font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums}
+.live{display:grid;grid-template-columns:56px 1fr;gap:12px;align-items:center}
+.wheel{width:56px;height:56px;border-radius:50%;border:5px solid var(--ink);position:relative}
+.wheel::before{content:"";position:absolute;left:50%;top:-5px;width:6px;height:9px;margin-left:-3px;background:var(--accent)}
+.wheel::after{content:"";position:absolute;left:3px;right:3px;top:50%;height:5px;margin-top:-2px;background:var(--ink);border-radius:2px}
+.bars{display:grid;grid-template-columns:34px 1fr 54px;gap:5px 8px;align-items:center;font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums}
+.bar{height:10px;background:var(--bg);border:1px solid var(--line);border-radius:2px;position:relative;overflow:hidden}
+.bar b{position:absolute;top:0;bottom:0;left:0;width:0}
+.bar.thr b{background:var(--thr)} .bar.brk b{background:var(--brk)} .bar.str b{background:var(--str)}
+.bar.str::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--muted)}
+.bars span:nth-child(3n){text-align:right}
+.trace{width:100%;height:150px;display:block}
+footer{font-size:13px;color:var(--muted);max-width:90ch}
+@media (max-width:860px){ .main{grid-template-columns:1fr} h1{font-size:32px} }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div>
+      <div class="eyebrow">TRT Esports · Official Sporting Code</div>
+      <h1 id="h1">Incident Replays</h1>
+    </div>
+    <p id="lede"></p>
+  </header>
+
+  <div class="tabs" id="tabs" role="tablist" aria-label="Incidents"></div>
+
+  <div class="main">
+    <section class="panel stage" aria-label="Replay">
+      <div id="view">
+        <div class="hud top"><span class="chip" id="clock">0.00 s</span><span class="chip" id="flag"><i></i><span></span></span></div>
+        <div class="hud bot"><div id="caption"></div></div>
+      </div>
+      <div class="controls">
+        <button class="btn primary" id="play" type="button">Pause</button>
+        <button class="btn" id="restart" type="button">Restart</button>
+        <input type="range" id="scrub" min="0" max="8" step="0.01" value="0" aria-label="Replay position">
+        <div class="seg" role="group" aria-label="Playback speed">
+          <button class="btn" type="button" data-rate="0.25" aria-pressed="false">¼×</button>
+          <button class="btn" type="button" data-rate="0.5" aria-pressed="false">½×</button>
+          <button class="btn" type="button" data-rate="1" aria-pressed="true">1×</button>
+        </div>
+        <button class="btn" id="cam" type="button">Overhead view</button>
+      </div>
+    </section>
+    <aside class="panel verdict" id="verdict" aria-live="polite"></aside>
+  </div>
+
+  <section class="tele" id="tele" aria-label="Driver inputs"></section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script id="core">
+/* Pure simulation core: track geometry, car paths, derived driver inputs. No DOM. */
+const SIM=(()=>{
+const DT=1/60, CL=x=>Math.max(0,Math.min(1,x));
+function lin(k,t){ if(t<=k[0][0])return k[0][1];
+  for(let i=1;i<k.length;i++) if(t<=k[i][0]){const a=k[i-1],b=k[i];return a[1]+(b[1]-a[1])*(t-a[0])/((b[0]-a[0])||1);}
+  return k[k.length-1][1]; }
+function ease(k,t){ if(t<=k[0][0])return k[0][1];
+  for(let i=1;i<k.length;i++) if(t<=k[i][0]){const a=k[i-1],b=k[i];let f=(t-a[0])/((b[0]-a[0])||1);f=f*f*(3-2*f);return a[1]+(b[1]-a[1])*f;}
+  return k[k.length-1][1]; }
+function track(segs){ let x=0,y=0,th=0; const X=[0],Y=[0],TH=[0];
+  for(const g of segs){
+    if(g.len){ for(let i=0;i<g.len;i++){x+=Math.cos(th);y+=Math.sin(th);X.push(x);Y.push(y);TH.push(th);} }
+    else { const L=Math.round(Math.abs(g.deg)*Math.PI/180*g.r), d=(g.deg*Math.PI/180)/L;
+      for(let i=0;i<L;i++){th+=d/2;x+=Math.cos(th);y+=Math.sin(th);th+=d/2;X.push(x);Y.push(y);TH.push(th);} } }
+  return {x:X,y:Y,th:TH,len:X.length-1}; }
+function at(T,s,d){ s=Math.max(0,Math.min(T.len-1e-6,s)); const i=Math.floor(s),f=s-i;
+  const x=T.x[i]+(T.x[i+1]-T.x[i])*f, y=T.y[i]+(T.y[i+1]-T.y[i])*f, th=T.th[i]+(T.th[i+1]-T.th[i])*f;
+  return [x-d*Math.sin(th), y+d*Math.cos(th), th]; }
+function pchip(p){ const n=p.length,h=[],dl=[],m=new Array(n).fill(0);
+  for(let i=0;i<n-1;i++){h[i]=p[i+1][0]-p[i][0];dl[i]=(p[i+1][1]-p[i][1])/h[i];}
+  for(let i=1;i<n-1;i++) if(dl[i-1]*dl[i]>0){const w1=2*h[i]+h[i-1],w2=h[i]+2*h[i-1];m[i]=(w1+w2)/(w1/dl[i-1]+w2/dl[i]);}
+  return s=>{ if(s<=p[0][0])return p[0][1]; if(s>=p[n-1][0])return p[n-1][1]; let i=0; while(s>p[i+1][0])i++;
+    const t=(s-p[i][0])/h[i],t2=t*t,t3=t2*t;
+    return (2*t3-3*t2+1)*p[i][1]+(t3-2*t2+t)*h[i]*m[i]+(-2*t3+3*t2)*p[i+1][1]+(t3-t2)*h[i]*m[i+1]; }; }
+function path(T,pts){ const f=pchip(pts), s0=pts[0][0], s1=pts[pts.length-1][0], X=[],Y=[],D=[],S=[],DD=[];
+  for(let s=s0;s<=s1+1e-9;s+=0.5){ const d=f(s),p=at(T,s,d); if(X.length) D.push(D[D.length-1]+Math.hypot(p[0]-X[X.length-1],p[1]-Y[Y.length-1])); else D.push(0);
+    X.push(p[0]);Y.push(p[1]);S.push(s);DD.push(d); }
+  const n=X.length, L=D[n-1];
+  function pos(q){ let i;
+    if(q<=0) i=0; else if(q>=L) i=n-2; else { let lo=0,hi=n-1; while(hi-lo>1){const m=(lo+hi)>>1; if(D[m]<=q)lo=m; else hi=m;} i=lo; }
+    const f=(q-D[i])/((D[i+1]-D[i])||1);
+    return [X[i]+(X[i+1]-X[i])*f, Y[i]+(Y[i+1]-Y[i])*f, S[i]+(S[i+1]-S[i])*f, DD[i]+(DD[i+1]-DD[i])*f]; }
+  return {pos,len:L}; }
+function smooth(a,r){ const o=new Array(a.length); for(let i=0;i<a.length;i++){let s=0,c=0;for(let j=Math.max(0,i-r);j<=Math.min(a.length-1,i+r);j++){s+=a[j];c++;}o[i]=s/c;} return o; }
+function run(T,c,dur){ const P=path(T,c.path), n=Math.round(dur/DT)+1;
+  const o={x:[],y:[],yaw:[],v:[],thr:[],brk:[],str:[],s:[],d:[],n};
+  const hd=q=>{const a=P.pos(q-1.3),b=P.pos(q+1.3);return Math.atan2(b[1]-a[1],b[0]-a[0]);};
+  let dist=0;
+  for(let i=0;i<n;i++){ const t=i*DT, v=lin(c.speed,t), a=(lin(c.speed,t+DT)-v)/DT, p=P.pos(dist), h=hd(dist);
+    let k=hd(dist+0.6)-hd(dist-0.6); k=Math.atan2(Math.sin(k),Math.cos(k))/1.2;
+    let thr=(v<0.2&&a<0.2)?0:(a>=-0.3?CL((c.base||0.25)+a/4):0), brk=a<-0.5?CL((-a-0.5)/10):0, str=v>1?Math.max(-1,Math.min(1,k*25)):0;
+    for(const ov of c.ovr||[]) if(t>=ov.t0&&t<ov.t1){ if(ov.thr!=null)thr=ov.thr; if(ov.brk!=null)brk=ov.brk; if(ov.str!=null)str=ov.str; }
+    o.x.push(p[0]);o.y.push(p[1]);o.s.push(p[2]);o.d.push(p[3]);o.v.push(v);
+    o.yaw.push(h+(c.spin?ease(c.spin,t)*Math.PI/180:0)); o.thr.push(thr);o.brk.push(brk);o.str.push(str);
+    dist+=v*DT; }
+  o.thr=smooth(o.thr,4);o.brk=smooth(o.brk,4);o.str=smooth(o.str,10);
+  return o; }
+/* Oriented-box overlap depth between two cars at sample i (negative = apart). */
+function overlap(A,B,i,da,db){ const ax=[A.yaw[i],A.yaw[i]+Math.PI/2,B.yaw[i],B.yaw[i]+Math.PI/2]; let best=1e9;
+  const dx=B.x[i]-A.x[i], dy=B.y[i]-A.y[i];
+  for(const a of ax){ const ux=Math.cos(a),uy=Math.sin(a);
+    const ra=Math.abs(Math.cos(a-A.yaw[i]))*da[0]/2+Math.abs(Math.sin(a-A.yaw[i]))*da[1]/2;
+    const rb=Math.abs(Math.cos(a-B.yaw[i]))*db[0]/2+Math.abs(Math.sin(a-B.yaw[i]))*db[1]/2;
+    best=Math.min(best,ra+rb-Math.abs(dx*ux+dy*uy)); }
+  return best; }
+
+const TR={ corner:track([{len:150},{r:30,deg:-90},{len:140}]), cornerLong:track([{len:275},{r:30,deg:-90},{len:140}]),
+  straight:track([{len:700}]), pit:track([{len:220}]) };
+const GT=[4.6,1.9], LMH=[5.0,2.0];
+
+/* Scenario facts only. Rulings live in the separate answers block. */
+const SCN=[
+{ id:'rear-tap', env:'corner', dur:8, setup:'Blue leads Red towards a right-hand corner.',
+  hits:[[3.27,['red','blue'],'Contact.']],
+  cars:[
+   {key:'blue',name:'Blue',kind:'GT3',dim:GT,
+    path:[[40,4],[135,4],[174,-4],[212,5.4],[250,4],[289,3]],
+    speed:[[0,44],[1.2,46.5],[3.25,23.5],[3.35,25.5],[4.3,23],[8,39]],
+    spin:[[3.25,0],[3.5,-9],[3.95,6],[4.4,0]],
+    ovr:[{t0:3.2,t1:3.55,thr:0},{t0:3.3,t1:3.6,str:0.45},{t0:3.6,t1:3.9,str:-0.95}]},
+   {key:'red',name:'Red',kind:'GT3',dim:GT,
+    path:[[27,4],[135,4],[174,-3.6],[212,3.8],[289,3]],
+    speed:[[0,44],[1.535,47.5],[3.25,27.45],[3.4,21.5],[4.6,21],[8,36]]}] },
+
+{ id:'divebomb', env:'corner', dur:8, setup:'Red follows Blue towards a right-hand corner.',
+  hits:[[3.28,['red','blue'],'Contact.']], flag:[4.6,8,'#f5c400','Yellow flag'],
+  cars:[
+   {key:'blue',name:'Blue',kind:'GT3',dim:GT,
+    path:[[40,4],[135,4],[170,-2.4],[182,3.2],[196,8.5],[210,12],[222,13]],
+    speed:[[0,44],[1.2,46.5],[3.25,23.5],[3.4,27],[5.7,0],[8,0]],
+    spin:[[3.3,0],[5.7,-205]],
+    ovr:[{t0:3.35,t1:5.7,thr:0,brk:1,str:-1}]},
+   {key:'red',name:'Red',kind:'GT3',dim:GT,
+    path:[[12,3],[105,3],[140,-3.6],[166,-4.3],[183,-1],[200,4],[216,7],[236,7],[262,3],[289,3]],
+    speed:[[0,45],[2.3,49.6],[3.3,37],[3.5,30],[4.6,17],[5.6,15],[8,27]],
+    ovr:[{t0:2.3,t1:3.5,brk:1}]}] },
+
+{ id:'forced-off', env:'corner', dur:8, setup:'Blue and Red approach a right-hand corner side by side.',
+  hits:[[4.75,['red','blue'],'Blue leaves the track.']],
+  cars:[
+   {key:'blue',name:'Blue',kind:'GT3',dim:GT,
+    path:[[61,3.6],[140,3.6],[174,0.4],[196,3.6],[214,7.3],[240,8.3],[268,5],[289,3.6]],
+    speed:[[0,42],[0.9,44],[2.9,23.8],[3.8,24.5],[4.5,27],[5.0,23],[6.2,20],[8,31]],
+    ovr:[{t0:4.3,t1:4.75,str:0.4},{t0:4.75,t1:5.6,thr:0}]},
+   {key:'red',name:'Red',kind:'GT3',dim:GT,
+    path:[[60,-1.5],[140,-1.5],[174,-4],[200,1.8],[214,5.0],[262,5.0],[289,3]],
+    speed:[[0,42],[0.9,44],[2.9,21.5],[3.8,21.5],[8,37]]}] },
+
+{ id:'rejoin', env:'corner', dur:8, setup:'Blue is stopped on the grass at the corner exit. Red is approaching.',
+  hits:[[4.27,['red','blue'],'Contact.']], flag:[0,8,'#f5c400','Yellow flag'],
+  cars:[
+   {key:'blue',name:'Blue',kind:'GT3',dim:GT,
+    path:[[214,11],[220,11],[241,3.8],[256,6.5],[272,9.5],[289,10.5]],
+    speed:[[0,0],[1.3,0],[4.3,15],[4.45,26],[6.8,0],[8,0]],
+    spin:[[4.3,0],[6.8,150]],
+    ovr:[{t0:4.3,t1:6.8,thr:0,brk:1,str:1}]},
+   {key:'red',name:'Red',kind:'GT3',dim:GT,
+    path:[[104,4],[138,4],[174,-4],[210,4],[234,4.3],[250,1.2],[289,1]],
+    speed:[[0,44],[1.9,23],[2.6,22.5],[4.05,32.5],[4.3,25],[4.6,15],[5.5,11],[8,12]],
+    ovr:[{t0:4.05,t1:4.6,brk:1,thr:0}]}] },
+
+{ id:'wrecking', env:'straight', wall:true, dur:8, setup:'Blue and Red run down the main straight.',
+  hits:[[1.97,['red','blue'],'Contact.']], flag:[3.2,8,'#f5c400','Yellow flag'],
+  cars:[
+   {key:'blue',name:'Blue',kind:'GT3',dim:GT,
+    base:1,path:[[40,2.7],[150,2.7],[172,6],[190,8.25],[330,8.25]],
+    speed:[[0,54],[2.0,58],[2.45,55],[2.7,40],[5.4,0],[8,0]],
+    spin:[[2.05,0],[2.5,22],[3.2,6],[5.4,-12]],
+    ovr:[{t0:2.05,t1:5.4,thr:0,brk:1,str:-0.9}]},
+   {key:'red',name:'Red',kind:'GT3',dim:GT,
+    base:1,path:[[46,-1.5],[122,-1.5],[150,0.75],[166,1.9],[190,-0.5],[240,-1.5],[700,-1.5]],
+    speed:[[0,52],[2.0,55],[8,62]],
+    ovr:[{t0:1.45,t1:2.2,str:0.6},{t0:2.2,t1:2.7,str:-0.4}]}] },
+
+{ id:'unsafe-release', env:'pit', dur:8, setup:'Blue is in the pit lane on the speed limiter. Red is stopped in its pit box.',
+  hits:[[5.42,['red','blue'],'Contact.']],
+  cars:[
+   {key:'blue',name:'Blue',kind:'GT3',dim:GT,
+    path:[[8,2.6],[70,2.6],[90,3.75],[112,3.75],[134,2.6],[220,2.6]],
+    speed:[[0,16.7],[4.2,16.7],[4.7,9.5],[5.5,9],[8,16.7]]},
+   {key:'red',name:'Red',kind:'GT3',dim:GT,
+    path:[[72,-5.2],[75,-5.1],[91,1.5],[102,2.4],[220,2.6]],
+    speed:[[0,0],[2.7,0],[4.4,10.5],[5.4,15.5],[5.8,16.7],[8,16.7]]}] },
+
+{ id:'blue-flag', env:'cornerLong', c0:275, post:[150,235], dur:9, setup:'A Hypercar catches two GT cars before a right-hand corner.',
+  hits:[[4.45,['proto','red'],'Contact.']], flag:[0.6,4.6,'#1d66db','Blue flag'],
+  cars:[
+   {key:'blue',name:'Blue',kind:'GT3',dim:GT,
+    base:1,path:[[45,4],[260,4],[299,-4],[337,4.3],[415,3]],
+    speed:[[0,45],[3.79,46.6],[5.84,23.5],[6.8,23],[9,30]]},
+   {key:'red',name:'Red',kind:'GT3',dim:GT,
+    base:1,path:[[100,4],[260,4],[287,-2.2],[300,3],[312,8.5],[324,12],[336,13.2]],
+    speed:[[0,45],[2.6,46.5],[4.5,25.2],[4.62,28.5],[6.9,0],[9,0]],
+    spin:[[4.5,0],[6.9,-200]],
+    ovr:[{t0:4.5,t1:6.9,thr:0,brk:1,str:-1}]},
+   {key:'proto',name:'Hypercar',kind:'LMH',dim:LMH,
+    base:1,path:[[0,-1],[150,-1.5],[225,-3.6],[282,-4.2],[298,-3],[314,2],[328,5],[352,5],[382,3],[415,3]],
+    speed:[[0,66],[2.97,68],[4.5,44],[4.7,35],[5.6,20],[6.6,18],[9,30]],
+    ovr:[{t0:2.97,t1:4.7,brk:1,thr:0}]}] }
+];
+for(const s of SCN){ s.T=TR[s.env]; for(const c of s.cars) c.o=run(s.T,c,s.dur); }
+return {DT,TR,SCN,at,overlap};
+})();
+if(typeof module!=='undefined') module.exports=SIM;
+</script>
+<script id="answers">
+/*ANSWERS-START*/
+const ANS={
+'rear-tap':{ tab:'Rear tap', title:'Light contact under braking', cls:'Class 1 · Racing incident', ref:'2.1.1 Light Avoidable Contact', at:'red',
+  what:'Red brakes a fraction late for the right-hander and taps Blue’s rear bumper at turn-in. Blue is unsettled, runs wide over the exit kerb and keeps the place.',
+  pen:[['red','0–5 s time penalty (discretionary)']], range:'Class 1 range in the code: warning, 5–10 s, 0–2 PP. Stewards may settle this one with a warning.',
+  why:['A small misjudgment of closing speed; Red stayed in control and the move was plausible.','Contact came from close racing, not over-aggression, so it stays in Class 1.','Avoidable contact can still be penalised when no position is lost.'],
+  recourse:'Blue carries on and reports within 48 hours of the finish with drivers, lap, corner, a short factual description and video (13.1). A second or third tap in the same race moves Red to Class 2 under 2.2.5.',
+  ev:[[0,'Blue leads Red towards the braking zone.'],[1.2,'Blue brakes at the normal marker.'],[1.54,'Red brakes 0.3 s later and carries more speed.'],[3.27,'Contact. Red’s nose taps Blue’s rear bumper.',1],[4.4,'Blue runs wide over the exit kerb but keeps the place.']] },
+'divebomb':{ tab:'Divebomb', title:'Unrealistic divebomb', cls:'Class 2 · Reckless driving', ref:'2.2.1 Unrealistic Divebombs', at:'red',
+  what:'Red launches from about six car lengths back, brakes far too late and arrives at the apex with no overlap established before turn-in. Blue turns in on the normal line and is hit in the side, spinning into the gravel.',
+  pen:[['red','15 s time penalty + 3 PP']], range:'Class 2 range: 10–20 s, 2–4 PP.',
+  why:['There was no credible overlap before turn-in.','The move only worked if Blue gave up the corner.','The risk was foreseeable and out of proportion to the reward. The outcome does not set the severity; the decision does.'],
+  recourse:'Blue reports within 48 hours. Blue must not pay it back on track: retaliation is a Class 3 offense (2.3.2). Repeat divebombs raise the time and PP, and can be upgraded to Class 3.',
+  ev:[[0,'Red starts six car lengths behind Blue.'],[1.2,'Blue brakes at the normal marker. Red stays flat.'],[2.3,'Red finally brakes, 1.1 s after Blue, and dives for the inside.'],[3.28,'Contact. Red cannot slow and hits Blue’s side at the apex.',1],[4.4,'Blue spins into the gravel. Red runs wide and rejoins.']] },
+'forced-off':{ tab:'Forced off', title:'Forcing a car off track', cls:'Class 2 · Reckless driving', ref:'2.2.2 Forcing Cars Off Track', at:'red',
+  what:'Blue is fully alongside on the outside through the corner. On exit Red runs all the way out to the kerb and leaves less than a car’s width. Blue is pushed onto the grass and loses the place.',
+  pen:[['red','10 s time penalty + 2 PP']], range:'Class 2 range: 10–20 s, 2–4 PP. Live stewards may instead order the position back (15.1).',
+  why:['Overlap was established, so Red owed Blue racing room.','Red could see Blue alongside the whole way through the corner.','Whether Blue saved the car is secondary to the act itself.'],
+  recourse:'Blue rejoins safely and reports within 48 hours. If live stewarding is active, expect a give-back order to Red.',
+  ev:[[0,'Blue draws alongside Red on the outside before the braking zone.'],[2.9,'Side by side at the apex. Overlap is established.'],[4.0,'Red opens the steering and drifts out to the exit kerb.'],[4.75,'Blue has no room left and is forced onto the grass.',1],[5.6,'Blue lifts to rejoin safely. Red has the place.']] },
+'rejoin':{ tab:'Dangerous rejoin', title:'Dangerous rejoin', cls:'Class 2 · Reckless driving', ref:'2.2.3 Dangerous Rejoins', at:'blue',
+  what:'Blue has spun onto the outside of the corner exit. Without waiting for a gap, Blue accelerates straight back onto the racing line as Red arrives at speed. Red has nowhere to go.',
+  pen:[['blue','15 s time penalty + 3 PP']], range:'Class 2 range: 10–20 s, 2–4 PP.',
+  why:['A safe option existed: hold off-line until Red had passed.','Red was clearly approaching on the racing line.','Blue put urgency ahead of safety. A collision is not needed for this to be reckless.'],
+  recourse:'Red reports within 48 hours. Red’s damage does not reduce Blue’s liability, and Red is responsible for nursing the damaged car safely (section 11).',
+  ev:[[0,'Blue has spun and sits on the grass at the corner exit.'],[1.3,'Blue pulls away without waiting, heading for the racing line.'],[2.6,'Red exits the corner on the normal line, unsighted until late.'],[4.05,'Red brakes hard but has no room.'],[4.27,'Contact. Red hits Blue as it crosses onto the racing line.',1],[5.4,'Blue spins again. Red continues with damage.']] },
+'wrecking':{ tab:'Intentional wreck', title:'Intentional wrecking', cls:'Class 3 · Severe offense', ref:'2.3.1 Intentional Wrecking · 2.3.2 Retaliation', at:'red',
+  what:'Blue passes Red cleanly on the straight. As Blue comes alongside, Red turns left with a deliberate steering input and shoves Blue into the wall. There is no corner and no racing reason to move.',
+  pen:[['red','Disqualified, 6 PP and a one-race ban']], range:'Class 3 range: 30 s or more up to DSQ, 6+ PP, race ban, season removal or community ban. Passing 5 PP also triggers a pit-lane start at Red’s next attended event.',
+  why:['Intent shows in the telemetry: a sharp left steering input on a straight at full throttle.','The move had nothing to do with legitimate racing.','Intentional wrecking is not tolerated under any circumstance.'],
+  recourse:'Blue reports within 48 hours with video. Blue must not respond on track or argue during live stewarding. Stewards can go further than the estimate, up to removal from the season.',
+  ev:[[0,'Blue has a run on Red down the straight.'],[1.0,'Blue pulls out and draws alongside on the left. A clean pass.'],[1.45,'Red turns left towards Blue. Full throttle, no lift.'],[1.97,'Contact. Red drives into Blue’s side.',1],[2.6,'Blue is pushed into the wall and out of the race.']] },
+'unsafe-release':{ tab:'Unsafe release', title:'Unsafe pit release', cls:'Pit lane · Releasing driver responsible', ref:'6.2 Pit Box Releases', at:'red',
+  what:'Blue is on the limiter in the fast lane. Red is released from its box straight into Blue’s path without filtering in behind. Blue has to brake and squeeze towards the pit wall, and the cars touch.',
+  pen:[['red','20 s time penalty + 2 PP']], range:'Section 6 sets no fixed tariff. 20 s is the top of the Class 2 time range, reflecting the strict safety standard in the pit lane. A release with no contact is still the releasing driver’s responsibility.',
+  why:['The fast lane has right of way at all times.','Red did not check for traffic and did not filter in behind Blue.','Blue should not have to brake, change direction or take evasive action for a pit release.'],
+  recourse:'Blue reports within 48 hours. The correct release: hold in the working lane, let Blue pass, then merge behind.',
+  ev:[[0,'Blue enters the pit lane on the speed limiter, in the fast lane.'],[2.7,'Red is released from its box as Blue approaches.'],[4.2,'Red crosses the working lane into the fast lane. Blue brakes.'],[5.42,'Contact. Blue is squeezed towards the pit wall.',1],[6.2,'Red has taken the fast lane ahead of Blue.']] },
+'blue-flag':{ tab:'Blue flag', title:'Late lunge on a lapped car', cls:'Class 2 · Multiclass conduct', ref:'5.1 Responsibilities of the Faster Class · 8.1 Responsibility of the Faster Driver', at:'proto',
+  what:'A Hypercar passes Blue cleanly on the straight, then reaches Red just as Red turns in. Red is under blue flags and takes its normal line. The Hypercar is still more than four car lengths back at turn-in, lunges for the inside and gets its nose alongside Red’s rear wheel at the apex. Red turns across it and is spun into the gravel.',
+  pen:[['proto','15 s time penalty + 3 PP, and one multiclass incident on record'],['red','No action. Predictable, and did not defend.'],['blue','No action.']],
+  range:'Class 2 range: 10–20 s, 2–4 PP. Multiclass incidents also count towards Hypercar license escalation (4.1).',
+  why:['It looks like Red turned in on a faster car under blue flags. But blue flags are informational; they signal awareness, not right of way.','A lapped car may stay on its normal line as long as it is predictable and does not defend. Red’s steering trace is one smooth turn-in with no reactive move.','The faster class must plan the pass, have meaningful overlap before claiming space, and accept delay. The Hypercar braked later than it could control and relied on Red to get out of the way.','Low-probability braking moves into a slower-class apex are named in 5.1. The clean pass on Blue shows the right way: on the straight, early, with room.'],
+  recourse:'Red reports within 48 hours. Had Red moved in reaction to the Hypercar, or lifted mid-corner unpredictably, stewards could share responsibility under 5.3.',
+  ev:[[0,'A Hypercar closes on two GT cars at 240 km/h.'],[0.6,'Blue flags are shown to both GT cars.'],[2.1,'The Hypercar passes Blue on the straight with room to spare.'],[2.97,'The Hypercar brakes late, aiming for the inside of Red.'],[3.6,'Red turns in on the normal line. The Hypercar is still four car lengths back.'],[4.45,'Contact. The Hypercar’s nose hits Red’s rear corner at the apex.',1],[5.4,'Red spins into the gravel. The Hypercar continues.']] }
+};
+/*ANSWERS-END*/
+</script>
+<script>
+(()=>{
+const $=q=>document.querySelector(q), SCN=SIM.SCN, DT=SIM.DT, A=(typeof ANS!=='undefined'&&ANS)||null;
+const COL={red:0xd42f2f,blue:0x1d66db,proto:0xe9b400}, CSSV={red:'--red',blue:'--blue',proto:'--proto'};
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let cur=null, curA=null, curEv=[], t=0, playing=!reduce, rate=1, hold=0, overhead=false, cars3=[], rings=[], world=null, teleEls=[];
+
+$('#lede').textContent=A?'Seven reconstructed incidents with the steering, throttle and brake inputs of every car, and the penalty a steward would likely hand out under the code.'
+  :'Seven reconstructed incidents with the steering, throttle and brake inputs of every car. You are the steward: decide who is responsible and what the penalty should be.';
+$('#foot').textContent=A?'These are illustrative reconstructions. Penalties are estimates based on the TRT Official Sporting Code; the stewards decide every real case on its evidence. Steering is shown as a share of full lock, left above the centre line and right below it.'
+  :'These are illustrative reconstructions for steward training. Steering is shown as a share of full lock, left above the centre line and right below it.';
+if(!A) $('#h1').textContent='Incident Review';
+
+/* ---------- three.js scene ---------- */
+const view=$('#view'); let renderer,scene,camera,ok=true;
+try{
+  renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));
+  view.insertBefore(renderer.domElement,view.firstChild);
+}catch(e){ ok=false; view.insertAdjacentHTML('afterbegin','<p style="padding:16px;color:#111">This browser could not start WebGL, so the 3D replay is unavailable. The input traces below still work.</p>'); }
+if(ok){
+  scene=new THREE.Scene(); scene.background=new THREE.Color(0x9fc0e4); scene.fog=new THREE.Fog(0x9fc0e4,260,950);
+  camera=new THREE.PerspectiveCamera(38,16/9,1,1500);
+  scene.add(new THREE.HemisphereLight(0xffffff,0x6a7a5a,0.95));
+  const sun=new THREE.DirectionalLight(0xffffff,0.75); sun.position.set(60,120,80); scene.add(sun);
+  new ResizeObserver(resize).observe(view); resize();
+}
+function resize(){ const w=view.clientWidth,h=view.clientHeight; if(!w||!h)return; renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix(); }
+
+const basic=c=>new THREE.MeshBasicMaterial({color:c,side:THREE.DoubleSide});
+const lam=c=>new THREE.MeshLambertMaterial({color:c});
+function strip(T,s0,s1,d0,d1,col,h){ const pos=[],idx=[]; let n=0;
+  for(let s=s0;;s+=1){ const ss=Math.min(s,s1),a=SIM.at(T,ss,d0),b=SIM.at(T,ss,d1); pos.push(a[0],h,-a[1],b[0],h,-b[1]);
+    if(n){const k=(n-1)*2; idx.push(k,k+2,k+1,k+1,k+2,k+3);} n++; if(ss>=s1)break; }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setIndex(idx);
+  const m=new THREE.Mesh(g,basic(col)); world.add(m); return m; }
+function kerb(T,s0,s1,d0,d1){ for(let s=s0,i=0;s<s1;s+=2,i++) strip(T,s,Math.min(s+2,s1),d0,d1,i%2?0xf2f2f2:0xc8322d,0.09); }
+function box(x,y,h,lx,hy,lz,col){ const m=new THREE.Mesh(new THREE.BoxGeometry(lx,hy,lz),lam(col)); m.position.set(x,h+hy/2,-y); world.add(m); return m; }
+function label(text,x,y,w,hh,col){ const c=document.createElement('canvas'); c.width=512; c.height=96; const g=c.getContext('2d');
+  g.fillStyle=col||'#f4f4f4'; g.font='700 70px "Saira Condensed","Arial Narrow",sans-serif'; g.textAlign='center'; g.textBaseline='middle'; g.fillText(text,256,52);
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(w,hh),new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c),transparent:true,depthWrite:false}));
+  m.rotation.x=-Math.PI/2; m.position.set(x,0.1,-y); world.add(m); }
+function ground(){ const c=document.createElement('canvas'); c.width=64; c.height=8; const g=c.getContext('2d');
+  g.fillStyle='#55803d'; g.fillRect(0,0,32,8); g.fillStyle='#4d7737'; g.fillRect(32,0,32,8);
+  const tx=new THREE.CanvasTexture(c); tx.wrapS=tx.wrapT=THREE.RepeatWrapping; tx.repeat.set(75,1);
+  tx.magFilter=THREE.NearestFilter; tx.anisotropy=renderer.capabilities.getMaxAnisotropy();
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(3000,3000),new THREE.MeshBasicMaterial({map:tx})); m.rotation.x=-Math.PI/2; m.position.set(300,0,0); world.add(m); }
+function flagPost(T,s){ const p=SIM.at(T,s,-10.5); box(p[0],p[1],0,2.4,2.2,2.4,0xe8e8e8); box(p[0],p[1]+1.3,2.2,0.12,2.6,0.12,0x333333);
+  const f=new THREE.Mesh(new THREE.PlaneGeometry(2.2,1.4),new THREE.MeshBasicMaterial({color:0x1d66db,side:THREE.DoubleSide})); f.position.set(p[0]+1.2,4.1,-(p[1]+1.3)); world.add(f); }
+
+function buildEnv(S){ const T=S.T, L=T.len, ASP=0x3b3e44;
+  ground();
+  if(S.env==='corner'||S.env==='cornerLong'){ const o=(S.c0||150)-150;
+    strip(T,o+146,o+222,7.2,26,0xcdb98a,0.03);                 /* gravel trap outside the corner */
+    strip(T,0,L,-6,6,ASP,0.06); strip(T,0,L,5.7,5.95,0xf2f2f2,0.09); strip(T,0,L,-5.95,-5.7,0xf2f2f2,0.09);
+    kerb(T,o+156,o+192,-7.2,-6); kerb(T,o+194,o+232,6,7.2); kerb(T,o+112,o+148,6,7.2);
+    for(const [s,txt] of [[50,'150'],[100,'100'],[125,'50']]){ const p=SIM.at(T,o+s,9); box(p[0],p[1],0,0.3,1.5,1.6,0xf2f2f2); label(txt,p[0],p[1]+3,6,1.6); }
+    for(let s=0;s<o+40;s+=25){ box(s,-9,0,0.25,1,0.25,0xf2f2f2); }
+    for(const s of S.post||[]) flagPost(T,s);
+  } else if(S.env==='straight'){
+    strip(T,0,L,-6,6,ASP,0.06); strip(T,0,L,5.7,5.95,0xf2f2f2,0.09); strip(T,0,L,-5.95,-5.7,0xf2f2f2,0.09);
+    if(S.wall){ box(L/2,9.6,0,L,1.1,0.6,0xb9bec6); for(let s=10;s<L;s+=20) box(s,9.28,0.25,6,0.5,0.06,0xc8322d); }
+    for(let s=0;s<L;s+=25){ box(s,-9,0,0.25,1,0.25,0xf2f2f2); if(!S.wall) box(s,9,0,0.25,1,0.25,0xf2f2f2); }
+  } else {
+    strip(T,0,L,-7.6,4.8,ASP,0.06); strip(T,0,L,-10.5,-7.6,0x8d9198,0.06);
+    strip(T,0,L,4.45,4.6,0xf2f2f2,0.09); strip(T,0,L,0.55,0.7,0xf2c230,0.09); strip(T,0,L,-3.25,-3.1,0xf2f2f2,0.09);
+    box(L/2,5.3,0,L,1.0,0.5,0xc9ced6); box(L/2,-14.5,0,L,4.5,8,0xdadde2);
+    for(const s of [40,72,104,136,168]){ strip(T,s-3.6,s+3.6,-3.1,-3.0,0xf2f2f2,0.09);
+      strip(T,s-3.6,s-3.5,-7.4,-3.1,0xf2f2f2,0.09); strip(T,s+3.5,s+3.6,-7.4,-3.1,0xf2f2f2,0.09);
+      box(s,-10.4,0,5.5,3.2,0.3,0x2a2e35); }
+    for(const s of [40,136,168]){ const g=makeCar(0x8b9099,'GT3'); g.position.set(s,0,5.2); world.add(g); }
+    label('FAST LANE',30,2.6,14,2.6); label('FAST LANE',150,2.6,14,2.6); label('WORKING LANE',30,-1.2,16,2.4,'#b9bec6'); label('60',6,2.6,4,2.6,'#f2c230');
+  }
+}
+
+function makeCar(col,kind){ const g=new THREE.Group(), P=kind==='LMH', L=P?5.0:4.6, W=P?2.0:1.9, bh=P?0.42:0.6;
+  const add=(m,x,y,z,par)=>{m.position.set(x,y,z);(par||g).add(m);return m;};
+  const sh=new THREE.Mesh(new THREE.PlaneGeometry(L+0.5,W+0.5),new THREE.MeshBasicMaterial({color:0,transparent:true,opacity:0.28,depthWrite:false})); sh.rotation.x=-Math.PI/2; add(sh,0,0.12,0);
+  add(new THREE.Mesh(new THREE.BoxGeometry(L,bh,W),lam(col)),0,0.22+bh/2,0);
+  add(new THREE.Mesh(new THREE.BoxGeometry(L*0.2,0.14,W*0.96),lam(col)),L*0.42,0.2,0);
+  add(new THREE.Mesh(new THREE.BoxGeometry(P?1.7:2.0,P?0.42:0.5,P?1.05:1.55),lam(0x1b1f26)),P?0.1:-0.25,0.22+bh+(P?0.21:0.25),0);
+  if(P) add(new THREE.Mesh(new THREE.BoxGeometry(1.7,0.6,0.07),lam(col)),-1.5,0.22+bh+0.3,0);
+  const wy=0.22+bh+(P?0.55:0.5);
+  add(new THREE.Mesh(new THREE.BoxGeometry(0.42,0.07,W),lam(0x16181c)),-L/2+0.25,wy,0);
+  for(const z of [-0.6,0.6]) add(new THREE.Mesh(new THREE.BoxGeometry(0.08,0.5,0.08),lam(0x16181c)),-L/2+0.3,wy-0.25,z);
+  for(const z of [-0.6,0.6]) add(new THREE.Mesh(new THREE.BoxGeometry(0.06,0.14,0.42),new THREE.MeshBasicMaterial({color:0xfff6c8})),L/2+0.01,0.22+bh*0.6,z);
+  const bl=new THREE.MeshBasicMaterial({color:0x4a1010});
+  for(const z of [-0.62,0.62]) add(new THREE.Mesh(new THREE.BoxGeometry(0.06,0.16,0.5),bl),-L/2-0.01,0.22+bh*0.6,z);
+  const wg=new THREE.CylinderGeometry(0.35,0.35,0.32,14), wm=lam(0x121212), fw=[];
+  for(const [x,z,front] of [[L*0.3,W/2-0.12,1],[L*0.3,-(W/2-0.12),1],[-L*0.3,W/2-0.12,0],[-L*0.3,-(W/2-0.12),0]]){
+    const piv=new THREE.Group(); add(piv,x,0.35,z); const w=new THREE.Mesh(wg,wm); w.rotation.x=Math.PI/2; piv.add(w); if(front)fw.push(piv); }
+  g.userData={fw,bl}; return g; }
+
+function buildScene(S){ if(!ok)return; if(world){ scene.remove(world); world.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material){ if(o.material.map)o.material.map.dispose(); o.material.dispose(); } }); }
+  world=new THREE.Group(); scene.add(world); buildEnv(S);
+  cars3=S.cars.map(c=>{ const g=makeCar(COL[c.key],c.kind); world.add(g); return g; });
+  rings=S.hits.map(e=>{ const i=Math.round(e[0]/DT), a=S.cars.find(c=>c.key===e[1][0]).o, b=S.cars.find(c=>c.key===e[1][1]).o;
+    const m=new THREE.Mesh(new THREE.RingGeometry(0.8,1.15,40),new THREE.MeshBasicMaterial({color:0xffd23c,transparent:true,side:THREE.DoubleSide,depthWrite:false}));
+    m.rotation.x=-Math.PI/2; m.position.set((a.x[i]+b.x[i])/2,0.3,-(a.y[i]+b.y[i])/2); m.visible=false; world.add(m); return {m,t:e[0]}; });
+  camD=null; }
+
+/* Positions are interpolated between simulation samples and the camera is locked to the cars,
+   so nothing lags or doubles from frame to frame. Only the zoom distance is eased. */
+let camD=null;
+function mix(a,i0,i1,f){ return a[i0]+(a[i1]-a[i0])*f; }
+function frame3(i0,i1,f){ if(!ok)return; let cx=0,cz=0;
+  cur.cars.forEach((c,k)=>{ const o=c.o,g=cars3[k], dy=Math.atan2(Math.sin(o.yaw[i1]-o.yaw[i0]),Math.cos(o.yaw[i1]-o.yaw[i0]));
+    g.position.set(mix(o.x,i0,i1,f),0,-mix(o.y,i0,i1,f)); g.rotation.y=o.yaw[i0]+dy*f;
+    for(const p of g.userData.fw) p.rotation.y=o.str[i0]*0.5; g.userData.bl.color.setHex(o.brk[i0]>0.06?0xff2a2a:0x4a1010); cx+=g.position.x; cz+=g.position.z; });
+  cx/=cars3.length; cz/=cars3.length; let r=0; for(const g of cars3) r=Math.max(r,Math.hypot(g.position.x-cx,g.position.z-cz));
+  const want=Math.max(34,Math.min(150,r*1.75+24)); camD=camD==null?want:camD+(want-camD)*0.05; const d=camD;
+  if(overhead){ camera.up.set(0,0,-1); camera.position.set(cx,d*1.25,cz); } else { camera.up.set(0,1,0); camera.position.set(cx-d*0.12,d*0.72,cz+d*0.82); }
+  camera.lookAt(cx,0,cz);
+  for(const R of rings){ const a=t-R.t; R.m.visible=a>=0&&a<1.1; if(R.m.visible){ const s=1+a*5; R.m.scale.set(s,s,s); R.m.material.opacity=Math.max(0,1-a/1.1); } }
+  renderer.render(scene,camera); }
+
+/* ---------- panels ---------- */
+const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const sw=k=>`<span class="sw" style="background:var(${CSSV[k]})"></span>`;
+function buildVerdict(S,k){ const a=curA, name=key=>S.cars.find(c=>c.key===key).name;
+  $('#verdict').innerHTML=a?
+  `<div class="pills"><span class="pill cls">${esc(a.cls)}</span><span class="pill">${esc(a.ref)}</span></div>
+   <h2>${esc(a.title)}</h2><p>${esc(a.what)}</p>
+   <div><h3>Estimated penalty</h3><div class="pen">${a.pen.map((p,j)=>`<div class="row">${sw(p[0])}<span class="${j?'':'big'}">${esc(name(p[0]))}: ${esc(p[1])}</span></div>`).join('')}<div class="range">${esc(a.range)}</div></div></div>
+   <div><h3>Why the stewards land there</h3><ul>${a.why.map(w=>`<li>${esc(w)}</li>`).join('')}</ul></div>
+   <div><h3>Recourse</h3><p>${esc(a.recourse)}</p></div>`
+  :`<div class="pills"><span class="pill cls">Steward review</span><span class="pill">${S.cars.length} cars</span></div>
+   <h2>Incident ${k+1}</h2><p>${esc(S.setup)}</p>
+   <div><h3>Your ruling</h3><ol><li>Which car is responsible, or is it shared?</li><li>Which section of the Sporting Code applies, and which incident class?</li><li>What penalty would you give, and what recourse does the other driver have?</li></ol></div>
+   <div><h3>Evidence</h3><p>Replay it at ¼ speed, switch to the overhead view, and compare each car’s steering, throttle and brake traces around the dashed incident marker.</p></div>`; }
+function buildTele(S){ const box=$('#tele'); box.innerHTML=''; teleEls=S.cars.map(c=>{ const el=document.createElement('article'); el.className='panel card';
+  const role=curA?`<span class="tag ${c.key===curA.at?'fault':''}">${c.key===curA.at?'At fault':'Not at fault'}</span>`:'';
+  el.innerHTML=`<div class="head">${sw(c.key)}<span class="name">${esc(c.name)}</span><span class="tag">${c.kind}</span>${role}<span class="spd">0 km/h</span></div>
+   <div class="live"><div class="wheel" aria-hidden="true"></div><div class="bars">
+     <span>THR</span><div class="bar thr"><b></b></div><span class="vt">0%</span>
+     <span>BRK</span><div class="bar brk"><b></b></div><span class="vb">0%</span>
+     <span>STR</span><div class="bar str"><b></b></div><span class="vs">0</span></div></div>
+   <canvas class="trace" role="img" aria-label="${esc(c.name)} throttle, brake and steering over the replay"></canvas>`;
+  box.appendChild(el);
+  return {c,spd:el.querySelector('.spd'),wheel:el.querySelector('.wheel'),bt:el.querySelector('.thr b'),bb:el.querySelector('.brk b'),bs:el.querySelector('.str b'),
+    vt:el.querySelector('.vt'),vb:el.querySelector('.vb'),vs:el.querySelector('.vs'),cv:el.querySelector('canvas')}; }); }
+
+let css={},cssAge=99;
+function colors(){ if(cssAge++<45)return; cssAge=0; const st=getComputedStyle(document.documentElement); for(const k of ['thr','brk','str','ink','muted','line','accent']) css[k]=st.getPropertyValue('--'+k).trim(); }
+function drawTrace(E,fi){ const cv=E.cv,o=E.c.o,dpr=Math.min(devicePixelRatio||1,2),w=cv.clientWidth,h=cv.clientHeight; if(!w)return;
+  if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);}
+  const g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  const L=32,R=w-4,ax=16,lh=(h-ax)/3,X=k=>L+(k/(o.n-1))*(R-L);
+  g.font='11px "IBM Plex Mono",monospace'; g.textBaseline='middle';
+  [['thr','THR'],['brk','BRK'],['str','STR']].forEach(([key,lab],j)=>{ const y0=j*lh+4,y1=(j+1)*lh-4,mid=(y0+y1)/2,a=o[key];
+    g.fillStyle=css.muted; g.textAlign='left'; g.fillText(lab,0,mid);
+    g.strokeStyle=css.line; g.lineWidth=1; g.beginPath(); g.moveTo(L,y1+.5); g.lineTo(R,y1+.5); g.moveTo(L,y0+.5); g.lineTo(R,y0+.5); g.stroke();
+    g.beginPath();
+    if(key==='str'){ g.moveTo(L,mid+.5); g.lineTo(R,mid+.5); g.stroke(); g.beginPath(); for(let k=0;k<o.n;k+=2){const y=mid-a[k]*(y1-y0)/2; k?g.lineTo(X(k),y):g.moveTo(X(k),y);} }
+    else { g.moveTo(L,y1); for(let k=0;k<o.n;k+=2) g.lineTo(X(k),y1-a[k]*(y1-y0)); g.lineTo(R,y1); g.globalAlpha=.28; g.fillStyle=css[key]; g.fill(); g.globalAlpha=1;
+      g.beginPath(); for(let k=0;k<o.n;k+=2){const y=y1-a[k]*(y1-y0); k?g.lineTo(X(k),y):g.moveTo(X(k),y);} }
+    g.strokeStyle=css[key]; g.lineWidth=1.6; g.stroke(); });
+  g.fillStyle=css.muted; g.textAlign='center'; for(let s=0;s<=cur.dur;s+=2) g.fillText(s+' s',Math.min(R-8,Math.max(L+6,X(s/DT))),h-ax/2+1);
+  g.setLineDash([3,3]); g.strokeStyle=css.accent; g.lineWidth=1.2;
+  for(const e of cur.hits){ const x=X(e[0]/DT); g.beginPath(); g.moveTo(x,2); g.lineTo(x,h-ax); g.stroke(); }
+  g.setLineDash([]); g.strokeStyle=css.ink; g.lineWidth=1.5; const x=X(fi); g.beginPath(); g.moveTo(x,0); g.lineTo(x,h-ax); g.stroke(); }
+
+function frame(){ const S=cur,n=S.cars[0].o.n,fi=Math.max(0,Math.min(n-1,t/DT)),i0=Math.floor(fi),i1=Math.min(n-1,i0+1),f=fi-i0;
+  frame3(i0,i1,f); colors();
+  for(const E of teleEls){ const o=E.c.o,th=o.thr[i0],br=o.brk[i0],st=o.str[i0];
+    E.spd.textContent=Math.round(o.v[i0]*3.6)+' km/h'; E.bt.style.width=(th*100)+'%'; E.bb.style.width=(br*100)+'%';
+    const p=Math.abs(st)*50; E.bs.style.left=(st>0?50-p:50)+'%'; E.bs.style.width=p+'%';
+    E.vt.textContent=Math.round(th*100)+'%'; E.vb.textContent=Math.round(br*100)+'%';
+    const sp=Math.round(Math.abs(st)*100); E.vs.textContent=sp<2?'0':(st>0?'L ':'R ')+sp+'%';
+    E.wheel.style.transform=`rotate(${(-st*120).toFixed(1)}deg)`; drawTrace(E,fi); }
+  let e=curEv[0]; for(const x of curEv) if(x[0]<=t+1e-6) e=x;
+  const cap=$('#caption'); if(cap.textContent!==e[1]) cap.textContent=e[1]; cap.classList.toggle('hit',!!e[2]);
+  $('#clock').textContent=t.toFixed(2)+' s'; $('#scrub').value=t;
+  const fl=$('#flag'); if(S.flag&&t>=S.flag[0]&&t<=S.flag[1]){ fl.style.display='inline-flex'; fl.firstChild.style.background=S.flag[2]; fl.lastChild.textContent=S.flag[3]; } else fl.style.display='none'; }
+
+function setPlay(p){ playing=p; $('#play').textContent=p?'Pause':(t>=cur.dur?'Replay':'Play'); }
+function load(k){ cur=SCN[k]; curA=A?A[cur.id]:null; t=0; hold=0;
+  curEv=curA?curA.ev:[[0,cur.setup]].concat(cur.hits.map(h=>[h[0],h[2],1]));
+  [...$('#tabs').children].forEach((b,j)=>{b.setAttribute('aria-selected',j===k);b.tabIndex=j===k?0:-1;});
+  $('#scrub').max=cur.dur; buildScene(cur); buildVerdict(cur,k); buildTele(cur); cssAge=99;
+  if(reduce) t=Math.max(0,cur.hits[0][0]-0.4);
+  setPlay(!reduce); frame(); }
+
+SCN.forEach((S,k)=>{ const b=document.createElement('button'); b.className='tab'; b.type='button'; b.setAttribute('role','tab'); const a=A&&A[S.id];
+  b.innerHTML=a?`<span class="n">${String(k+1).padStart(2,'0')} · ${esc(a.cls.split(' · ')[0])}</span><span class="t">${esc(a.tab)}</span>`
+    :`<span class="n">${S.cars.length} cars</span><span class="t">Incident ${k+1}</span>`;
+  b.addEventListener('click',()=>load(k)); $('#tabs').appendChild(b); });
+$('#tabs').addEventListener('keydown',e=>{ const k=SCN.indexOf(cur); if(e.key==='ArrowRight'||e.key==='ArrowLeft'){ const n=(k+(e.key==='ArrowRight'?1:SCN.length-1))%SCN.length; load(n); $('#tabs').children[n].focus(); } });
+$('#play').addEventListener('click',()=>{ if(!playing&&t>=cur.dur){t=0;hold=0;} setPlay(!playing); });
+$('#restart').addEventListener('click',()=>{ t=0; hold=0; setPlay(true); });
+$('#scrub').addEventListener('input',e=>{ t=+e.target.value; hold=0; setPlay(false); frame(); });
+document.querySelectorAll('[data-rate]').forEach(b=>b.addEventListener('click',()=>{ rate=+b.dataset.rate; document.querySelectorAll('[data-rate]').forEach(x=>x.setAttribute('aria-pressed',x===b)); }));
+$('#cam').addEventListener('click',()=>{ overhead=!overhead; $('#cam').textContent=overhead?'Trackside view':'Overhead view'; if(!playing)frame(); });
+
+let last=performance.now();
+function tick(now){ const dt=Math.min(0.05,(now-last)/1000); last=now;
+  if(playing){ if(t<cur.dur){ t=Math.min(cur.dur,t+dt*rate); } else { hold+=dt; if(hold>2){t=0;hold=0;} } frame(); }
+  requestAnimationFrame(tick); }
+load(0); requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
